@@ -13,10 +13,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model dm {
-  id             String   @id
-  senderUsername String
-  senderId       String
-  message        String
-  createdTime    DateTime
+model Conversation {
+  id          String   @id @default(uuid())
+  senderId    String
+  messageText String
+  botReply    String
+  createdAt   DateTime @default(now())
+}
+
+model LogEntry {
+  id           String        @id @default(uuid())
+  timestamp    DateTime      @default(now())
+  level        String
+  code_ref     String
+  message      String
+  log_Metadata LogMetadata[]
+}
+
+model LogMetadata {
+  id    String @id @default(uuid())
+  logId String
+  key   String
+  value String
+
+  logEntry LogEntry @relation(fields: [logId], references: [id], onDelete: Cascade)
+
+  @@index([logId])
 }

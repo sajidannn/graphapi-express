@@ -3,6 +3,7 @@ const fs = require("fs");
 const dotenv = require("dotenv");
 const dmRoutes = require("./routes/dmRoutes.js");
 const webhookRoutes = require("./routes/webhookRoutes.js");
+const logRoutes = require("./routes/logRoutes.js");
 
 dotenv.config();
 
@@ -14,6 +15,7 @@ app.use(express.json());
 // Routes
 app.use(dmRoutes);
 app.use(webhookRoutes);
+app.use(logRoutes);
 
 // Privacy policy
 app.get("/privacy_policy", (req, res) => {

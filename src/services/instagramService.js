@@ -1,41 +1,79 @@
 const axios = require("axios");
 const { PrismaClient } = require("@prisma/client");
-const { askChatbot } = require("./chatbotService");
-
+const { askChatbot } = require("./chatbotService.js");
+const { createLog } = require('./logService.js');
 const prisma = new PrismaClient();
 
-exports.fetchAndSaveDMs = async () => {
-  const response = await axios.get("https://graph.instagram.com/v22.0/me/conversations", {
-    params: {
+
+exports.fetchDMs = async (after = null) => {
+  try {
+    let apiUrl = "https://graph.instagram.com/v22.0/me/conversations";
+    let params = {
       platform: "instagram",
       fields: "participant,from,message,messages{created_time,from,message,reactions,shares}",
       access_token: process.env.ACCESS_TOKEN,
-    },
+    };
+
+    if (after) {
+      params.after = after;
+    }
+
+    const response = await axios.get(apiUrl, { params });
+    const data = response.data;
+
+    let nextPage = null;
+    if (data.paging?.cursors?.after) {
+      const afterCursor = data.paging.cursors.after;
+      nextPage = `${process.env.BASE_URL}/fetch_dm?after=${afterCursor}`;
+    }
+
+    return {
+      success: true,
+      messages: data.data || [],
+      nextPage,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      messages: [],
+      nextPage: null,
+      error: error.response?.data || error.message,
+    };
+  }
+};
+
+exports.getConversations = async (filters) => {
+  const { senderId, startDate, endDate } = filters;
+
+  const whereClause = {};
+
+  if (senderId) {
+    whereClause.senderId = senderId;
+  }
+
+  if (startDate && endDate) {
+    whereClause.createdAt = {
+      gte: new Date(startDate),
+      lte: new Date(endDate)
+    };
+  } else if (startDate) {
+    whereClause.createdAt = {
+      gte: new Date(startDate)
+    };
+  } else if (endDate) {
+    whereClause.createdAt = {
+      lte: new Date(endDate)
+    };
+  }
+
+  const conversations = await prisma.conversation.findMany({
+    where: whereClause,
+    orderBy: {
+      createdAt: 'desc'
+    }
   });
 
-  const data = response.data;
-
-  if (data.data) {
-    for (const convo of data.data) {
-      if (convo.messages && convo.messages.data) {
-        for (const msg of convo.messages.data) {
-          const message = {
-            id: msg.id,
-            senderUsername: msg.from.username,
-            senderId: msg.from.id,
-            message: msg.message,
-            createdTime: new Date(msg.created_time),
-          };
-
-          await prisma.dm.upsert({
-            where: { id: message.id },
-            update: {},
-            create: message,
-          });
-        }
-      }
-    }
-  }
+  return conversations;
 };
 
 exports.handleWebhookEvent = async (body) => {
@@ -48,6 +86,16 @@ exports.handleWebhookEvent = async (body) => {
     const messageText = event.message?.text;
 
     if (senderId && messageText) {
+      await createLog(
+        'INFO',
+        'WEBHOOK_RECEIVED',
+        'Pesan diterima dari pengguna',
+        [
+          { key: 'senderId', value: senderId },
+          { key: 'messageText', value: messageText }
+        ]
+      );
+
       const chatbotText = await askChatbot(messageText, senderId);
 
       await axios.post(`https://graph.instagram.com/v22.0/me/messages`, {
@@ -60,7 +108,24 @@ exports.handleWebhookEvent = async (body) => {
         }
       });
 
-      console.log("Pesan dikirim kembali ke pengguna IG:", senderId);
+      await createLog(
+        'INFO',
+        'WEBHOOK_RESPONSE_SENT',
+        'Pesan balasan berhasil dikirim ke pengguna',
+        [
+          { key: 'senderId', value: senderId },
+          { key: 'responseText', value: chatbotText }
+        ]
+      );
+
+      await prisma.conversation.create({
+        data: {
+          senderId: senderId,
+          messageText: messageText,
+          botReply: chatbotText,
+          createdAt: new Date(),
+        },
+      });
     }
   }
 };

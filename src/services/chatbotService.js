@@ -1,4 +1,5 @@
 const axios = require("axios");
+const { createLog } = require('./logService.js');
 
 exports.askChatbot = async (question, sessionId) => {
   try {
@@ -17,9 +18,34 @@ exports.askChatbot = async (question, sessionId) => {
     );
 
     const chatbotText = response.data?.data?.message?.[0]?.text || "Maaf, tidak ada respons dari chatbot.";
+
+    await createLog(
+      'INFO',
+      'ASK_CHATBOT_SUCCESS",',
+      'Berhasil mendapat respons dari chatbot',
+      [
+        { key: "sessionId", value: sessionId },
+        { key: "question", value: question },
+        { key: "chatbotResponse", value: chatbotText }
+      ]
+    );
+
     return chatbotText;
   } catch (error) {
     console.error("Error contacting chatbot service:", error.response?.data || error.message);
+
+    await createLog(
+      'ERROR',
+      'ASK_CHATBOT_ERROR",',
+      'Gagal menghubungi chatbot',
+      [
+        { key: "sessionId", value: sessionId },
+        { key: "question", value: question },
+        { key: "chatbotResponse", value: chatbotText }
+      ]
+    );
+
+
     throw error;
   }
 };
