@@ -40,3 +40,12 @@ model LogMetadata {
 
   @@index([logId])
 }
+
+model InstagramToken {
+  token       String   @id
+  tokenType   String
+  expiresIn   Int
+  permissions String
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+}

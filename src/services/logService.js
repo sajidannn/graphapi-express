@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../database/index.js');
 
 exports.createLog = async (level, codeRef, message, metadata = []) => {
   const logEntry = await prisma.logEntry.create({

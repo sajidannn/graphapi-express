@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const dmRoutes = require("./routes/dmRoutes.js");
 const webhookRoutes = require("./routes/webhookRoutes.js");
 const logRoutes = require("./routes/logRoutes.js");
+const instagramTokenRoutes = require("./routes/instagramTokenRoutes.js");
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use(dmRoutes);
 app.use(webhookRoutes);
 app.use(logRoutes);
+app.use(instagramTokenRoutes);
 
 // Privacy policy
 app.get("/privacy_policy", (req, res) => {

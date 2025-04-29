@@ -1,8 +1,7 @@
 const axios = require("axios");
-const { PrismaClient } = require("@prisma/client");
 const { askChatbot } = require("./chatbotService.js");
 const { createLog } = require('./logService.js');
-const prisma = new PrismaClient();
+const prisma = require("../database/index.js");
 
 
 exports.fetchDMs = async (after = null) => {
