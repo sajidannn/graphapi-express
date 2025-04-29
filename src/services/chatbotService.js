@@ -32,8 +32,6 @@ exports.askChatbot = async (question, sessionId) => {
 
     return chatbotText;
   } catch (error) {
-    console.error("Error contacting chatbot service:", error.response?.data || error.message);
-
     await createLog(
       'ERROR',
       'ASK_CHATBOT_ERROR",',
@@ -44,7 +42,6 @@ exports.askChatbot = async (question, sessionId) => {
         { key: "chatbotResponse", value: chatbotText }
       ]
     );
-
 
     throw error;
   }
