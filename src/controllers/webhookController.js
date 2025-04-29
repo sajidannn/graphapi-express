@@ -14,13 +14,12 @@ exports.verifyWebhook = (req, res) => {
 
 exports.receiveWebhook = async (req, res) => {
   try {
-    console.log("Webhook POST received:");
-    console.log(JSON.stringify(req.body, null, 2));
+    // console.log("Webhook POST received:");
+    // console.log(JSON.stringify(req.body, null, 2));
 
     await handleWebhookEvent(req.body);
     res.sendStatus(200);
   } catch (error) {
-    console.error(error.response?.data || error.message);
-    res.sendStatus(500);
+    res.status(500).send(error.response?.data || error.message);
   }
 };

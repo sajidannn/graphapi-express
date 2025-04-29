@@ -41,3 +41,13 @@ exports.refreshInstagramToken = async (currentToken) => {
     };
   }
 }
+
+exports.getLatestInstagramToken = async () => {
+  const latestToken = await prisma.instagramToken.findFirst({
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  return latestToken || null;
+};

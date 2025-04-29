@@ -1,16 +1,23 @@
 const axios = require("axios");
 const { askChatbot } = require("./chatbotService.js");
 const { createLog } = require('./logService.js');
+const { getLatestInstagramToken } = require('./instagramTokenService');
 const prisma = require("../database/index.js");
 
 
 exports.fetchDMs = async (after = null) => {
   try {
-    let apiUrl = "https://graph.instagram.com/v22.0/me/conversations";
-    let params = {
+    const latest = await getLatestInstagramToken();
+
+    if (!latest || !latest.token) {
+      throw new Error('Instagram access token not found in database.');
+    }
+
+    const apiUrl = "https://graph.instagram.com/v22.0/me/conversations";
+    const params = {
       platform: "instagram",
       fields: "participant,from,message,messages{created_time,from,message,reactions,shares}",
-      access_token: process.env.ACCESS_TOKEN,
+      access_token: latest.token,
     };
 
     if (after) {
@@ -96,13 +103,18 @@ exports.handleWebhookEvent = async (body) => {
       );
 
       const chatbotText = await askChatbot(messageText, senderId);
+      const latest = await getLatestInstagramToken();
+
+      if (!latest || !latest.token) {
+        throw new Error('Instagram access token not found in database.');
+      }
 
       await axios.post(`https://graph.instagram.com/v22.0/me/messages`, {
         recipient: { id: senderId },
         message: { text: chatbotText }
       }, {
         headers: {
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Authorization: `Bearer ${latest.token}`,
           "Content-Type": "application/json"
         }
       });
