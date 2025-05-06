@@ -106,28 +106,48 @@ exports.handleWebhookEvent = async (body) => {
       const latest = await getLatestInstagramToken();
 
       if (!latest || !latest.token) {
-        throw new Error('Instagram access token not found in database.');
+        await createLog(
+          'ERROR',
+          'WEBHOOK_TOKEN_MISSING',
+          'Instagram access token not found in database.',
+          [{ key: 'senderId', value: senderId }]
+        );
+        continue; // skip loop if no token
       }
 
-      await axios.post(`https://graph.instagram.com/v22.0/me/messages`, {
-        recipient: { id: senderId },
-        message: { text: chatbotText }
-      }, {
-        headers: {
-          Authorization: `Bearer ${latest.token}`,
-          "Content-Type": "application/json"
-        }
-      });
+      try {
+        await axios.post(`https://graph.instagram.com/v22.0/me/messages`, {
+          recipient: { id: senderId },
+          message: { text: chatbotText }
+        }, {
+          headers: {
+            Authorization: `Bearer ${latest.token}`,
+            "Content-Type": "application/json"
+          }
+        });
 
-      await createLog(
-        'INFO',
-        'WEBHOOK_RESPONSE_SENT',
-        'Pesan balasan berhasil dikirim ke pengguna',
-        [
-          { key: 'senderId', value: senderId },
-          { key: 'responseText', value: chatbotText }
-        ]
-      );
+        await createLog(
+          'INFO',
+          'WEBHOOK_RESPONSE_SENT',
+          'Pesan balasan berhasil dikirim ke pengguna',
+          [
+            { key: 'senderId', value: senderId },
+            { key: 'responseText', value: chatbotText }
+          ]
+        );
+
+      } catch (err) {
+        await createLog(
+          'ERROR',
+          'WEBHOOK_SEND_FAILED',
+          'Gagal mengirim pesan balasan ke pengguna',
+          [
+            { key: 'senderId', value: senderId },
+            { key: 'error', value: err.response?.data?.error?.message || err.message }
+          ]
+        );
+        continue;
+      }
 
       await prisma.conversation.create({
         data: {
