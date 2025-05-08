@@ -44,7 +44,7 @@ model InstagramToken {
 
 model Conversation {
   id          String     @id @default(uuid())
-  userId      String
+  userId      String     @unique
   username    String
   lastMessage String?
   readStatus  ReadStatus @default(unread)

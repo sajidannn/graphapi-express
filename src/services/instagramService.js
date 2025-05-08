@@ -87,6 +87,61 @@ exports.getConversations = async (filters) => {
   return conversations;
 };
 
+// Fungsi utilitas untuk mengirim pesan ke Instagram
+const sendInstagramMessage = async (recipientId, messageText, token) => {
+  try {
+    const response = await axios.post(
+      `https://graph.instagram.com/v22.0/me/messages`,
+      {
+        recipient: { id: recipientId },
+        message: { text: messageText }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+    return { success: true, data: response.data };
+  } catch (error) {
+    throw new Error(error.response?.data?.error?.message || error.message);
+  }
+};
+
+// Fungsi utilitas untuk mengelola conversation
+const manageConversation = async (userId, messageText, senderType = 'user') => {
+  return await prisma.$transaction(async (prisma) => {
+    // Upsert conversation
+    const conversation = await prisma.conversation.upsert({
+      where: { userId },
+      update: {
+        lastMessage: messageText,
+        lastDate: new Date(),
+      },
+      create: {
+        userId,
+        username: `user-${userId}`,
+        lastMessage: messageText,
+        lastDate: new Date(),
+      },
+    });
+
+    // Simpan pesan
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        senderType,
+        content: messageText,
+        readStatus: 'unread',
+        sentAt: new Date(),
+      },
+    });
+
+    return conversation;
+  });
+};
+
 exports.handleWebhookEvent = async (body) => {
   const messagingEvents = body.entry?.[0]?.messaging || [];
 
@@ -94,119 +149,91 @@ exports.handleWebhookEvent = async (body) => {
     const isEcho = event.message?.is_echo;
     const senderId = event.sender?.id;
     const messageText = event.message?.text;
-    const timestamp = new Date(event.timestamp);
 
     if (senderId && messageText) {
-      // skip echo jika masuk via bot
-      if (isEcho) continue;
-
-      await createLog('INFO', 'WEBHOOK_RECEIVED', 'Pesan diterima dari pengguna', [
-        { key: 'senderId', value: senderId },
-        { key: 'messageText', value: messageText }
-      ]);
-
-      // Cari conversation berdasarkan userId (Instagram senderId)
-      let conversation = await prisma.conversation.findFirst({
-        where: { userId: senderId },
-      });
-
-      // Jika belum ada, buat conversation baru
-      if (!conversation) {
-        conversation = await prisma.conversation.create({
-          data: {
-            userId: senderId,
-            username: `user-${senderId}`, // bisa diganti jika ada cara ambil nama asli
-            lastMessage: messageText,
-            lastDate: timestamp,
-          },
-        });
-      }
-
-      // Simpan pesan user
-      await prisma.message.create({
-        data: {
-          conversationId: conversation.id,
-          senderType: 'user',
-          content: messageText,
-          readStatus: 'unread',
-          sentAt: timestamp,
-        },
-      });
-
-      const chatbotText = await askChatbot(messageText, senderId);
-      const latest = await getLatestInstagramToken();
-
-      if (!latest || !latest.token) {
-        await createLog('ERROR', 'WEBHOOK_TOKEN_MISSING', 'Instagram access token not found.', [
-          { key: 'senderId', value: senderId },
-        ]);
-        continue;
-      }
-
       try {
-        // Kirim balasan ke IG
-        await axios.post(`https://graph.instagram.com/v22.0/me/messages`, {
-          recipient: { id: senderId },
-          message: { text: chatbotText }
-        }, {
-          headers: {
-            Authorization: `Bearer ${latest.token}`,
-            "Content-Type": "application/json"
-          }
-        });
+        // Validasi dasar
+        if (isEcho) continue;
+        await createLog('INFO', 'WEBHOOK_RECEIVED', 'Pesan diterima dari pengguna', [
+          { key: 'senderId', value: senderId },
+          { key: 'messageText', value: messageText }
+        ]);
+
+        // Kelola conversation dan simpan pesan user
+        await manageConversation(senderId, messageText, 'user');
+
+        // Dapatkan respon chatbot
+        const chatbotText = await askChatbot(messageText, senderId);
+        const latestToken = await getLatestInstagramToken();
+
+        if (!latestToken?.token) {
+          throw new Error('Instagram access token not found');
+        }
+
+        // Kirim pesan ke Instagram
+        await sendInstagramMessage(senderId, chatbotText, latestToken.token);
+
+        // Simpan pesan bot dan update conversation
+        await manageConversation(senderId, chatbotText, 'bot');
 
         await createLog('INFO', 'WEBHOOK_RESPONSE_SENT', 'Balasan terkirim ke user', [
           { key: 'senderId', value: senderId },
           { key: 'responseText', value: chatbotText }
         ]);
 
-        // Simpan balasan bot
-        await prisma.message.create({
-          data: {
-            conversationId: conversation.id,
-            senderType: 'bot',
-            content: chatbotText,
-            readStatus: 'unread',
-            sentAt: new Date(),
-          },
-        });
-
-        // Update conversation terakhir
-        await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: {
-            lastMessage: chatbotText,
-            lastDate: new Date(),
-          },
-        });
-
-      } catch (err) {
-        await createLog('ERROR', 'WEBHOOK_SEND_FAILED', 'Gagal kirim balasan ke user', [
+      } catch (error) {
+        await createLog('ERROR', 'WEBHOOK_PROCESS_FAILED', 'Gagal memproses webhook', [
           { key: 'senderId', value: senderId },
-          { key: 'error', value: err.response?.data?.error?.message || err.message }
+          { key: 'error', value: error.message }
         ]);
-        continue;
       }
     }
 
     // Jika event adalah read receipt
     if (event.read?.mid && senderId) {
-      // Tandai semua pesan bot sebagai 'read' di conversation user
-      const conv = await prisma.conversation.findFirst({
-        where: { userId: senderId },
-      });
-
-      if (conv) {
+      try {
         await prisma.message.updateMany({
           where: {
-            conversationId: conv.id,
-            senderType: 'bot',
+            conversation: { userId: senderId },
+            senderType: { in: ['bot', 'user-admin'] },
             readStatus: 'unread',
           },
           data: { readStatus: 'read' },
         });
+      } catch (error) {
+        await createLog('ERROR', 'READ_RECEIPT_FAILED', 'Gagal update read receipt', [
+          { key: 'senderId', value: senderId },
+          { key: 'error', value: error.message }
+        ]);
       }
     }
   }
 };
 
+exports.sendManualMessageToUser = async (userId, text, senderType = 'user-admin') => {
+  try {
+    const latestToken = await getLatestInstagramToken();
+    if (!latestToken?.token) {
+      throw new Error('Instagram access token not found');
+    }
+
+    // Kirim pesan ke Instagram
+    await sendInstagramMessage(userId, text, latestToken.token);
+
+    // Kelola conversation
+    await manageConversation(userId, text, senderType);
+
+    await createLog('INFO', 'MANUAL_MESSAGE_SENT', 'Pesan manual terkirim', [
+      { key: 'userId', value: userId },
+      { key: 'text', value: text }
+    ]);
+
+    return { success: true, message: 'Pesan berhasil dikirim' };
+  } catch (error) {
+    await createLog('ERROR', 'MANUAL_MESSAGE_FAILED', 'Gagal mengirim pesan manual', [
+      { key: 'userId', value: userId },
+      { key: 'error', value: error.message }
+    ]);
+    return { success: false, message: error.message };
+  }
+};
