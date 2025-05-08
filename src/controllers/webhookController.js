@@ -14,8 +14,8 @@ exports.verifyWebhook = (req, res) => {
 
 exports.receiveWebhook = async (req, res) => {
   try {
-    // console.log("Webhook POST received:");
-    // console.log(JSON.stringify(req.body, null, 2));
+    console.log("Webhook POST received:");
+    console.log(JSON.stringify(req.body, null, 2));
 
     await handleWebhookEvent(req.body);
     res.sendStatus(200);

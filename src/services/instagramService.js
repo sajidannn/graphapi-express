@@ -54,20 +54,20 @@ exports.getConversations = async (filters) => {
   const whereClause = {};
 
   if (senderId) {
-    whereClause.senderId = senderId;
+    whereClause.userId = senderId;
   }
 
   if (startDate && endDate) {
-    whereClause.createdAt = {
+    whereClause.lastDate = {
       gte: new Date(startDate),
       lte: new Date(endDate)
     };
   } else if (startDate) {
-    whereClause.createdAt = {
+    whereClause.lastDate = {
       gte: new Date(startDate)
     };
   } else if (endDate) {
-    whereClause.createdAt = {
+    whereClause.lastDate = {
       lte: new Date(endDate)
     };
   }
@@ -75,7 +75,12 @@ exports.getConversations = async (filters) => {
   const conversations = await prisma.conversation.findMany({
     where: whereClause,
     orderBy: {
-      createdAt: 'desc'
+      lastDate: 'desc'
+    },
+    include: {
+      messages: {
+        orderBy: { sentAt: 'asc' } // Urutkan pesan dalam conversation
+      },
     }
   });
 
@@ -86,36 +91,60 @@ exports.handleWebhookEvent = async (body) => {
   const messagingEvents = body.entry?.[0]?.messaging || [];
 
   for (const event of messagingEvents) {
-    if (event.message?.is_echo) continue;
-
+    const isEcho = event.message?.is_echo;
     const senderId = event.sender?.id;
     const messageText = event.message?.text;
+    const timestamp = new Date(event.timestamp);
 
     if (senderId && messageText) {
-      await createLog(
-        'INFO',
-        'WEBHOOK_RECEIVED',
-        'Pesan diterima dari pengguna',
-        [
-          { key: 'senderId', value: senderId },
-          { key: 'messageText', value: messageText }
-        ]
-      );
+      // skip echo jika masuk via bot
+      if (isEcho) continue;
+
+      await createLog('INFO', 'WEBHOOK_RECEIVED', 'Pesan diterima dari pengguna', [
+        { key: 'senderId', value: senderId },
+        { key: 'messageText', value: messageText }
+      ]);
+
+      // Cari conversation berdasarkan userId (Instagram senderId)
+      let conversation = await prisma.conversation.findFirst({
+        where: { userId: senderId },
+      });
+
+      // Jika belum ada, buat conversation baru
+      if (!conversation) {
+        conversation = await prisma.conversation.create({
+          data: {
+            userId: senderId,
+            username: `user-${senderId}`, // bisa diganti jika ada cara ambil nama asli
+            lastMessage: messageText,
+            lastDate: timestamp,
+          },
+        });
+      }
+
+      // Simpan pesan user
+      await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          senderType: 'user',
+          content: messageText,
+          readStatus: 'unread',
+          sentAt: timestamp,
+        },
+      });
 
       const chatbotText = await askChatbot(messageText, senderId);
       const latest = await getLatestInstagramToken();
 
       if (!latest || !latest.token) {
-        await createLog(
-          'ERROR',
-          'WEBHOOK_TOKEN_MISSING',
-          'Instagram access token not found in database.',
-          [{ key: 'senderId', value: senderId }]
-        );
-        continue; // skip loop if no token
+        await createLog('ERROR', 'WEBHOOK_TOKEN_MISSING', 'Instagram access token not found.', [
+          { key: 'senderId', value: senderId },
+        ]);
+        continue;
       }
 
       try {
+        // Kirim balasan ke IG
         await axios.post(`https://graph.instagram.com/v22.0/me/messages`, {
           recipient: { id: senderId },
           message: { text: chatbotText }
@@ -126,37 +155,58 @@ exports.handleWebhookEvent = async (body) => {
           }
         });
 
-        await createLog(
-          'INFO',
-          'WEBHOOK_RESPONSE_SENT',
-          'Pesan balasan berhasil dikirim ke pengguna',
-          [
-            { key: 'senderId', value: senderId },
-            { key: 'responseText', value: chatbotText }
-          ]
-        );
+        await createLog('INFO', 'WEBHOOK_RESPONSE_SENT', 'Balasan terkirim ke user', [
+          { key: 'senderId', value: senderId },
+          { key: 'responseText', value: chatbotText }
+        ]);
+
+        // Simpan balasan bot
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            senderType: 'bot',
+            content: chatbotText,
+            readStatus: 'unread',
+            sentAt: new Date(),
+          },
+        });
+
+        // Update conversation terakhir
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: {
+            lastMessage: chatbotText,
+            lastDate: new Date(),
+          },
+        });
 
       } catch (err) {
-        await createLog(
-          'ERROR',
-          'WEBHOOK_SEND_FAILED',
-          'Gagal mengirim pesan balasan ke pengguna',
-          [
-            { key: 'senderId', value: senderId },
-            { key: 'error', value: err.response?.data?.error?.message || err.message }
-          ]
-        );
+        await createLog('ERROR', 'WEBHOOK_SEND_FAILED', 'Gagal kirim balasan ke user', [
+          { key: 'senderId', value: senderId },
+          { key: 'error', value: err.response?.data?.error?.message || err.message }
+        ]);
         continue;
       }
+    }
 
-      await prisma.conversation.create({
-        data: {
-          senderId: senderId,
-          messageText: messageText,
-          botReply: chatbotText,
-          createdAt: new Date(),
-        },
+    // Jika event adalah read receipt
+    if (event.read?.mid && senderId) {
+      // Tandai semua pesan bot sebagai 'read' di conversation user
+      const conv = await prisma.conversation.findFirst({
+        where: { userId: senderId },
       });
+
+      if (conv) {
+        await prisma.message.updateMany({
+          where: {
+            conversationId: conv.id,
+            senderType: 'bot',
+            readStatus: 'unread',
+          },
+          data: { readStatus: 'read' },
+        });
+      }
     }
   }
 };
+

@@ -13,14 +13,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Conversation {
-  id          String   @id @default(uuid())
-  senderId    String
-  messageText String
-  botReply    String
-  createdAt   DateTime @default(now())
-}
-
 model LogEntry {
   id           String        @id @default(uuid())
   timestamp    DateTime      @default(now())
@@ -48,4 +40,48 @@ model InstagramToken {
   permissions String
   createdAt   DateTime @default(now())
   expiresAt   DateTime
+}
+
+model Conversation {
+  id          String     @id @default(uuid())
+  userId      String
+  username    String
+  lastMessage String?
+  readStatus  ReadStatus @default(unread)
+  lastDate    DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  messages Message[]
+}
+
+model Message {
+  id             String     @id @default(uuid())
+  conversationId String
+  senderType     String
+  content        String?
+  readStatus     ReadStatus @default(unread)
+  sentAt         DateTime
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
+}
+
+model MessageAttachment {
+  id        String   @id @default(uuid())
+  messageId String
+  fileUrl   String
+  fileType  String?
+  fileOrder Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}
+
+enum ReadStatus {
+  unread
+  read
 }
